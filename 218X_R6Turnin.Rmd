@@ -79,10 +79,15 @@ saveRDS(ca_pumsR6,"ca_pumsR6.rds")
 ```{r, echo = F}
 #to avoid viewing downloading progress in html
 ca_pumsR6 <- readRDS("ca_pumsR6.rds")
+```
+
+```{r}
+#filter pums data for bay area only 
 bay_pumsR6 <-
   ca_pumsR6 %>% 
   filter(PUMA %in% bay_pumasR6$PUMACE10)
 ```
+
 
 ```{r}
 #filtering pums and pumas data for SF county only
