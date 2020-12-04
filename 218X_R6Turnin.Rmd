@@ -58,7 +58,7 @@ pums_vars_2019 <- #changed to 2019
   filter(year == 2019, survey == "acs1")
 ```
 
-```{r}
+```{r, eval = F}
 #preaggregated housing cost variables - had to change to 2019 because 2014-2018 was too big
 ca_pumsR6 <- get_pums(
   variables = c(
@@ -73,13 +73,19 @@ ca_pumsR6 <- get_pums(
   year = 2019,
   survey = "acs1"
 )
+saveRDS(ca_pumsR6,"ca_pumsR6.rds")
+```
 
+```{r, echo = F}
+#to avoid viewing downloading progress in html
+ca_pumsR6 <- readRDS("ca_pumsR6.rds")
 bay_pumsR6 <-
   ca_pumsR6 %>% 
   filter(PUMA %in% bay_pumasR6$PUMACE10)
 ```
 
 ```{r}
+#filtering pums and pumas data for SF county only
 sf_county <-
   bay_counties %>% 
   filter(NAME == "San Francisco")
@@ -156,20 +162,21 @@ sf_burden_groups <-
 sf_burden_summary <-
   sf_burden_groups %>% 
     summarize(
-    burdened_30 = sum(burdened_30),
-    households = sum(weight),
-    burden_30 = sum(burden_30*weight),
-    incomegap_30 = sum(incomegap_30*weight),
-    excess_30 = sum(excess_30*weight)
+    burdened_30 = sum(burdened_30), #number of burdened households (spend 30%+ income on housing)
+    households = sum(weight), #number of households 
+    burden_30 = sum(burden_30*weight), #total funding that would be required to eliminate this housing burden
+    incomegap_30 = sum(incomegap_30*weight), #total increase in income necessary to unburde households that are currently burdened assuming same rent/mortgage payment
+    excess_30 = sum(excess_30*weight) #total amount of money that households would have pay for rent/mortage in order to become burdened (negative amount indicates higher total burden than excess)
   ) %>% 
   mutate(
-    burdened_30_perc = burdened_30/households
+    burdened_30_perc = burdened_30/households #percent of households burdened in San Francisco County 
   ) 
 
 sf_burden_summary
 ```
 
 ```{r}
+#joining pumas to burdened pums data, grouped by puma and renter/owner status
 sf_burden_pumas <-
   sf_burden_groups %>% 
   group_by(PUMA, status) %>%
@@ -377,6 +384,7 @@ table(my_parcel$RP1CLACDE) %>%
   select(Freq, DESCRIPTION)
 ```
 ```{r}
+#cleaning data of parcel to filter out public property, convert zones listed under two codes to one code, and add a column with potential building height based on zoning
 my_parcel_clean <-
   my_parcel %>% 
   mutate(
@@ -451,9 +459,9 @@ my_parcel_zoning <-
   ) %>% 
   st_transform(4326)
 
- #indicates underutilization based on current zoning
-sum(my_parcel_zoning$unused_floorarea, na.rm = T)
-sum(my_parcel_zoning$unused_units, na.rm = T)
+#indicates underutilization based on current zoning
+sum(my_parcel_zoning$unused_floorarea, na.rm = T) #total unused floor area in parcel
+sum(my_parcel_zoning$unused_units, na.rm = T) #total unused units in parcel
 ```
 
 ```{r}
