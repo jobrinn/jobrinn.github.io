@@ -555,22 +555,5 @@ my_stories_plot <-
 my_stories_plot
 ```
 
-```{r}
-#stories plot in 3D
-library(rayshader)
-
-plot_gg(
-  my_stories_plot,
-  width = 10,
-  height = 4,
-  scale = 100
-)
-
-render_snapshot(
-  "snapshot.png",
-  clear = TRUE
-)
-```
-
 
 
