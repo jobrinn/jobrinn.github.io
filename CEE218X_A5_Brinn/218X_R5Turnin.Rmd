@@ -1,5 +1,5 @@
 ---
-title: "218X_Chpt4_Stats2"
+title: "218X_R5"
 author: "Jordan Brinn"
 date: "11/13/2020"
 output: html_document
@@ -88,6 +88,7 @@ leaflet(bay_cbsas) %>%
 
 ```
 
+
 ```{r}
 #filter data to Bay Area CBSAs only
 bay_trips <-
@@ -113,6 +114,7 @@ bay_trips <-
   ) %>% 
   filter(hh_cbsa %in% bay_cbsas$GEOID)
 ```
+Map of Bay Area CBSAs (generally follow county lines)
 
 ```{r}
 #variables for purposes of trips
@@ -127,6 +129,7 @@ purpose_lookup <-
 
 purpose_lookup
 ```
+Table of "Why To" Values (possible reasons for taking a trip)
 
 ```{r}
 #variables for mode of transportation
@@ -141,6 +144,7 @@ mode_lookup <-
 
 mode_lookup
 ```
+Table of possible modes of transportation
 
 ```{r}
 #Reading in SFBI data and filter for ballog drop of locations in the Bay Area
@@ -173,6 +177,7 @@ leaflet() %>%
     label = ~ï..Name
   )
 ```
+Map of 10-minute walking isochrones of ballot drop off locations in the Bay Area
 
 ```{r}
 #10 minute walk isocrones for ballot drop off sites in Alameda County
@@ -207,6 +212,7 @@ leaflet() %>%
     label = ~ï..Name
   )
 ```
+Map of 10-minute walking isochrones of ballot drop off locations in the Alameda County 
 
 ```{r}
 #load ACS data
@@ -338,3 +344,5 @@ rbind(ac_income,ac_ballot_dropoff_income) %>%
     fill = "Household\nIncome"
   )
 ```
+
+Proportions of total population in each income bracket for Alameda County and proportions of populations within the 10-minute walking isochrones (assumes populations is evenly distributed throughout CBSAs)
