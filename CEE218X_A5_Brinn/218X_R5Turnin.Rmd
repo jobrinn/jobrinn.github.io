@@ -1,0 +1,340 @@
+---
+title: "218X_Chpt4_Stats2"
+author: "Jordan Brinn"
+date: "11/13/2020"
+output: html_document
+---
+In Alameda county, generally lower income brackets are overrepresented in the populations withtin the 10 minute walking distance isochrones around ballot drop off locations while upper income brackets are underrepresented. This could be due the fact that ballot drop off locations are frequently placed in more central urban areas where affordable and low income housing is often located. However, this data analysis assumed equal distribution of populations throughout core-based statistical areas which, while a good estimate, is still not entirely accurate. Therefore the income-based isochrone data analysis presented here may vary from the actual numbers. 
+
+Data Credit: BayAreaCommunity.org (ballot location data) and unboxproject.org (isochrone related data)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = F, message = F)
+library(tidyverse)
+library(readxl)
+library(tigris)
+library(sf)
+library(leaflet)
+library(zip)
+library(lehdr)
+library(tidyverse)
+library(censusapi)
+library(mapboxapi)
+
+Sys.setenv(CENSUS_KEY="0b9dfaf3fa0df7bb9bce2b33001ae985230cc118")
+```
+
+```{r}
+survey_households <- read_csv(paste0("survey_households.csv"))
+
+survey_person <- read_csv(paste0("survey_person.csv"))
+
+survey_trips <- read_csv(paste0("survey_trips.csv"))
+
+weights_person_7day <- read_csv(paste0("weights_person_7day.csv"))
+
+nhts_lookup <- read_excel(
+  paste0("thsc-nhts17-caltrans-codebook.xlsx"), 
+  sheet = "Value Lookup"
+)
+```
+
+```{r}
+#link personal weights from travel survey to survey_person
+person_weights <-
+  survey_person %>% 
+  left_join(
+    weights_person_7day %>% 
+      select(
+        sampno,
+        perno,
+        wttrdfin
+      ),
+    by = c("sampno","perno")
+  )
+```
+
+```{r}
+#Bay CBSAs
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+cbsas <- core_based_statistical_areas(cb = T, progress_bar = F)
+
+bay_cbsas <-
+  cbsas %>%
+  .[bay_counties %>% st_centroid(), ]
+
+leaflet(bay_cbsas) %>% 
+  addTiles() %>% 
+  addPolygons(
+    label = ~paste0(GEOID,": ",NAME)
+  )
+
+
+```
+
+```{r}
+#filter data to Bay Area CBSAs only
+bay_trips <-
+  survey_trips %>% 
+  left_join(
+    survey_person,
+    by = c("sampno","perno")
+  ) %>% 
+  left_join(
+    weights_person_7day %>% 
+      select(
+        sampno,
+        perno,
+        wttrdfin
+      ),
+    by = c("sampno","perno")
+  ) %>% 
+  left_join(
+    survey_households %>% select(
+      sampno,
+      hh_cbsa
+    )
+  ) %>% 
+  filter(hh_cbsa %in% bay_cbsas$GEOID)
+```
+
+```{r}
+#variables for purposes of trips
+purpose_lookup <-
+  nhts_lookup %>% 
+  filter(NAME == "WHYTO") %>% 
+  select(VALUE, LABEL) %>% 
+  mutate(
+    VALUE = as.numeric(VALUE),
+    LABEL = factor(LABEL, levels = LABEL)
+  )
+
+purpose_lookup
+```
+
+```{r}
+#variables for mode of transportation
+mode_lookup <-
+  nhts_lookup %>% 
+  filter(NAME == "TRPTRANS") %>% 
+  select(VALUE, LABEL) %>% 
+  mutate(
+    VALUE = as.numeric(VALUE),
+    LABEL = factor(LABEL, levels = LABEL)
+  )
+
+mode_lookup
+```
+
+```{r}
+#Reading in SFBI data and filter for ballog drop of locations in the Bay Area
+#Set coordinate system for lat and long coordinates provided in data
+SFBI_data <- read.csv("SFBI Database.csv")
+
+bay_ballot_dropoff <- 
+  SFBI_data %>% 
+  filter(
+   taxonomy == "Ballot Drop Off" 
+ ) %>% 
+  filter(!is.na(longitude..from.locations..2)) %>% 
+  filter(!is.na(latitude..from.locations..2)) %>% 
+  filter(longitude..from.locations..2 != "") %>% 
+  filter(latitude..from.locations..2 != "") %>% 
+  st_as_sf(coords = c("longitude..from.locations..2","latitude..from.locations..2")) %>% 
+  st_set_crs(4326)
+
+
+
+```
+
+```{r}
+#bay area ballot drop off isochrones
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addCircleMarkers(
+    data = bay_ballot_dropoff,
+    radius = 1,
+    label = ~ï..Name
+  )
+```
+
+```{r}
+#10 minute walk isocrones for ballot drop off sites in Alameda County
+alameda_county <-
+  bay_counties %>% 
+  filter(NAME == "Alameda") %>% 
+  st_transform(4326)
+
+ac_ballot_dropoff <-
+  bay_ballot_dropoff %>% 
+  .[alameda_county, ] #will this work with the SFBI data?
+
+walk_10min <- mb_isochrone(
+  ac_ballot_dropoff,
+  profile = "walking",
+  time = 10
+)
+
+ac_ballot_dropoff_walk_10min <-
+  ac_ballot_dropoff %>% 
+  st_set_geometry(NULL) %>% 
+  cbind(walk_10min$geometry) %>% 
+  st_as_sf()
+
+leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>%
+  addPolygons(
+    data = ac_ballot_dropoff_walk_10min,
+    label = ~ï..Name
+  )
+```
+
+```{r}
+#load ACS data
+acs_vars_2018_5yr <-
+  listCensusMetadata(
+    name = "2018/acs/acs5",
+    type = "variables"
+  )
+saveRDS(acs_vars_2018_5yr,"acs_vars_2018_5yr.csv")
+```
+
+```{r}
+#how many people live within 10 minute walk of ballot dropoff sites in Alameda and what is their income (assume population distributed evenly throughout CBGs)
+ac_bgs <- 
+  block_groups("CA","001", cb = T, progress_bar = F) %>% 
+  st_transform(26910) %>% #what does number come from??
+  mutate(original_area = st_area(.))
+
+ac_bg_isochrone_intersect <-
+  ac_bgs %>% 
+  st_intersection(
+    ac_ballot_dropoff_walk_10min %>% 
+      st_union() %>% 
+      st_transform(26910)
+  ) %>% 
+  mutate(
+    leftover_area = st_area(.),
+    perc_area = leftover_area / original_area
+  )
+
+ac_bg_income <-
+  getCensus(
+    name = "acs/acs5",
+    vintage = 2018,
+    region = "block group:*", 
+    regionin = "state:06+county:001",
+    vars = "group(B19001)"
+  ) %>% 
+  mutate(cbg = paste0(state,county,tract,block_group)) %>% 
+  select(!c(GEO_ID,state,county,tract,block_group,NAME) & !ends_with(c("EA","MA","M"))) %>%
+  pivot_longer(
+    ends_with("E"),
+    names_to = "variable",
+    values_to = "estimate"
+  ) %>%
+  left_join(
+    acs_vars_2018_5yr %>% 
+      select(name, label), 
+    by = c("variable" = "name")
+  ) %>% 
+  select(-variable) %>% 
+  separate(
+    label,
+    into = c(NA,NA,"income"),
+    sep = "!!"
+  ) %>% 
+  filter(!is.na(income)) %>% 
+  mutate(
+    income = case_when(
+      income %in% c("Less than $10,000","$10,000 to $14,999","$15,000 to $19,999","$20,000 to $24,999") ~ "Less than $25,000",
+      income %in% c("$25,000 to $29,999","$30,000 to $34,999","$35,000 to $39,999","$40,000 to $44,999","$45,000 to $49,999") ~ "$25,000 to $49,999",
+      income %in% c("$50,000 to $59,999","$60,000 to $74,999") ~ "$50,000 to $74,999",
+      TRUE ~ income
+    )
+  )
+
+ac_income <-
+  ac_bg_income %>% 
+  mutate(income = factor(income, levels = unique(ac_bg_income$income))) %>% 
+  group_by(income) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  mutate(
+    perc = estimate/sum(estimate),
+    group = "Full Population"
+  )
+  
+ac_ballot_dropoff_income <-
+  ac_bg_income %>% 
+  mutate(income = factor(income, levels = unique(ac_bg_income$income))) %>% 
+  left_join(
+    ac_bg_isochrone_intersect %>% 
+      select(cbg = GEOID, perc_area) %>% 
+      st_set_geometry(NULL)
+  ) %>% 
+  filter(!is.na(perc_area)) %>% 
+  mutate(
+    estimate = estimate * perc_area
+  ) %>% 
+  group_by(income) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  mutate(
+    perc = estimate/sum(estimate),
+    group = "Population within 10 min. walk of ballot dropoff location"
+  )
+#percent of Alameda County population within 10 minute walking distance of a ballot dropoff location
+sum(ac_ballot_dropoff_income$estimate)/
+  sum(ac_income$estimate)
+```
+
+```{r}
+#pie charts comparing % of Alameda county pop within each income bracket to the break down for the populations within a 10 minute walking distance of testing sites 
+rbind(ac_income,ac_ballot_dropoff_income) %>% 
+  ggplot(
+    aes(
+      x = "", 
+      y = perc, 
+      fill = reorder(income,desc(income))
+    )
+  ) + 
+  geom_bar(
+    stat = "identity", 
+    position = position_fill()
+  ) +
+  geom_text(
+    aes(label = paste0(round(perc*100),"%")), 
+    position = position_fill(vjust = 0.5)
+  ) +
+  coord_polar(theta = "y") +
+  facet_wrap(~ group)  +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.position = 'bottom'
+  ) + 
+  guides(
+    fill = guide_legend(nrow=3, byrow=TRUE)
+  ) +
+  labs(
+    fill = "Household\nIncome"
+  )
+```
