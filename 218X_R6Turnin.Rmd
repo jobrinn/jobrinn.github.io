@@ -1,5 +1,5 @@
 ---
-title: "218X_R6Turnin"
+title: "218X_R6"
 author: "Jordan Brinn"
 date: "12/3/2020"
 output: html_document
@@ -179,6 +179,7 @@ sf_burden_summary <-
 
 sf_burden_summary
 ```
+Owner Burden Summary Table
 
 ```{r}
 #joining pumas to burdened pums data, grouped by puma and renter/owner status
@@ -235,6 +236,7 @@ sf_burden_pumas %>%
     title = "% Cost-burdened<br>households"
   )
 ```
+Map of % of home owner population in each SF PUMA that spends 30%+ of their income on their annual payments
 
 ```{r}
 #Map of % of Renter households paying 30%+ of income 
@@ -272,7 +274,7 @@ sf_burden_pumas %>%
     title = "% Cost-burdened<br>households"
   )
 ```
-
+Map of % of home renter population in each SF PUMA that spends 30%+ of their income on their annual payments
 
 
 #Part 2 - Property Uses and Zoning
@@ -301,6 +303,7 @@ unlink(temp)
 
 datakey %>% select(`DATA NAME`, `FIELD NAME`) %>% as.data.frame()
 ```
+Table of data fields in the SF Assessor-Recorder data
 
 ```{r}
 #joining property tax data to parcel shape df - will be errors
@@ -365,6 +368,7 @@ condo_parcels <-
   my_parcel %>% 
   filter(geometry %in% duplicate_shapes$geometry)
 ```
+Plot of parcels in census tract #017101 in San Francisco. Darker blue indicate condominiumization (multiple owners for one plot)
 
 ```{r}
 #what zones are included in my tract
@@ -380,6 +384,7 @@ my_parcel %>%
 #RH-2|RH-2 --> convert to RH-3
 #RM-1 - Low Density - mixture of dwelling types, lots of apartment buildings, generally 25-35 ft wide and 40 ft high. Separate entrances for groups of units, ground floor and top floor outdoor spaces, nonresidential uses
 ```
+Table of zoning codes included in the parcel. Mostly Residential Housing category.
 
 ```{r}
 #summary of stats
@@ -388,6 +393,8 @@ table(my_parcel$RP1CLACDE) %>%
   left_join(usecode, by = c("Var1"= "CODE")) %>% 
   select(Freq, DESCRIPTION)
 ```
+Summary of specific building uses in the parcel
+
 ```{r}
 #cleaning data of parcel to filter out public property, convert zones listed under two codes to one code, and add a column with potential building height based on zoning
 my_parcel_clean <-
@@ -463,8 +470,10 @@ my_parcel_zoning <-
     )
   ) %>% 
   st_transform(4326)
+```
 
-#indicates underutilization based on current zoning
+Unused floor area and unused units indicate underutilization based on current zoning. This parcel could be more densely populated without any rezoning efforts
+```{r}
 sum(my_parcel_zoning$unused_floorarea, na.rm = T) #total unused floor area in parcel
 sum(my_parcel_zoning$unused_units, na.rm = T) #total unused units in parcel
 ```
@@ -496,6 +505,7 @@ leaflet() %>%
     title = "Unused Floor Area"
   )
 ```
+Map of unused floor area by parcel. Two of the highest underutilized parcels are currently undergoing major renovations, so they will potentially be less underutilized in the future. 
 
 ```{r}
 #plot of additional allowed units (#unused units)
@@ -524,6 +534,7 @@ leaflet() %>%
     title = "Additional Units<br>Allowed"
   )
 ```
+Map of additional units allowed on each parcel. No parcel has potential for more than 3 units, but these numbers are still quite high considering most of these buildings are not allowed to have more than 3 units based on zoning. The area consists of mostly of large homes, many of which have been subdivided into multiple units. This often results in units being larger than necessary since it is often easiest to make one entire floor into it's own unit. The southern section of this parcel contains many homes which have not been subdivided.
 
 ```{r}
 #ggplot of unused stories instead of leaflet
@@ -551,9 +562,9 @@ my_stories_plot <-
     high = "red"
   )
 
-#indicates greatest potential in Special Height Districts
 my_stories_plot
 ```
+Map of unused stories by parcel. This assumes each floor would be 11 ft high, which, given that much of the parcels are in the Residential Housing zoning category, would mean that many buildings could have a maximum of three stories since the maximum height is restricted to 35 feet. With other buildings such as those in Residential Mixed zoning, the maximum height is 40ft which would also only allow for 3 stories based on the 11 ft per story assumption, but in reality, they may be able to include another floor. 
 
 
 
