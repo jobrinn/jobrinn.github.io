@@ -1,0 +1,383 @@
+---
+title: "CEE218X_R3"
+author: "Jordan Brinn"
+date: "11/8/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = F, message = F)
+library(tidyverse)
+library(tidycensus)
+library(censusapi)
+library(tigris)
+library(sf)
+library(mapview)
+library(leaflet)
+library(plotly)
+library(censusapi)
+library(corrplot)
+library(devtools)
+library(readxl)
+
+
+Sys.setenv(CENSUS_KEY="0b9dfaf3fa0df7bb9bce2b33001ae985230cc118")
+```
+
+```{r}
+acs_vars_2018_5yr <-
+  listCensusMetadata(
+    name = "2018/acs/acs5",
+    type = "variables"
+  )
+saveRDS(acs_vars_2018_5yr,"acs_vars_2018_5yr.csv")
+```
+
+```{r}
+census_race_labels <- 
+  c(
+    "White Alone",
+    "Black or African American",
+    "American Indian and Alaska Native Alone",
+    "Asian Alone",
+    "Native Hawaiian and Other Pacific Islander Alone)",
+    "Some Other Race Alone",
+    "Two or More Races"
+  )
+```
+
+
+Part 1 - PUMS multiregression analysis on an individual level to evaluate the correlation between race (whiteness), income, and age of housing. 
+
+I wanted to explore the relationship between these factors in the Bay Area because aging housing stock is often less energy efficient (higher site Energy Use Intensity or energy consumption per square foot). Several studies - two of which I've included in the Sources section at the bottom of this report as Study 1 and Study 2 - have demonstrated that there often older (less efficient) housing stock is occupied by lower income folks and folks of color. Even though these households tend to consume more energy than newer housing stock (often occupied by white and high income folks), their site EUI is much higher which increases disparity in energy burden (the % of income a household spends on their energy bills). This has implications for energy efficiency upgrade and weatherization programs.
+
+The studies I included examined these relationships within Los Angeles County and the city of Detroit. However, within the Bay Area, whiteness, as well as black or African American, and income of residents had very little correlation with the year a house was built. This lack of correlation could be due to many factors including timing of population and housing stock increases, location and spread of different racial groups through urban and rural areas, etc. 
+```{r, eval = F}
+ca_pumsR3 <- get_pums(
+  variables = c(
+    "PUMA",
+    "NP",
+    "RAC1P", #race
+    "HINCP", #income
+    "YBL", #year structure built
+    "HHL", #household language
+    "MULTG" #multigenerational household (y/n)
+  ),
+  state = "CA",
+  year = 2018,
+  survey = "acs5",
+  recode = T
+)
+saveRDS(ca_pumsR3,"ca_pumsR3.rds")
+```
+
+```{r, echo = F}
+#to avoid viewing downloading progress in html
+ca_pumsR3 <- readRDS("ca_pumsR3.rds")
+```
+
+```{r}
+#filtering pums and pumas for Bay Area
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+ca_pumasR3 <-
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_pumasR3 <-
+  ca_pumasR3 %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_pumasR3 %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+bay_pumsR3 <-
+  ca_pumsR3 %>% 
+  filter(PUMA %in% bay_pumasR3$PUMACE10)
+saveRDS(bay_pumsR3,"bay_pumsR3.rds")
+```
+
+```{r, echo = F}
+bay_pumsR3 <- readRDS("bay_pumsR3.rds")
+```
+
+```{r}
+#filter pums data for year built, income, and race 
+bay_pumsR3 <-
+  bay_pumsR3 %>% 
+  mutate(
+    YBL = as.numeric(YBL)
+    ) %>% 
+  drop_na(
+    YBL, 
+    HINCP,
+    RAC1P_label
+    )
+```
+
+```{r}
+#binary for white or nonwhite, income = HCINP, year built --> ranges consolidated to one year or singular years (data provided after 2000) grouped to one year
+bay_pums_regression <-
+  bay_pumsR3 %>% 
+  filter(SPORDER == 1) %>% 
+  mutate(
+    white = ifelse(
+      RAC1P_label == "White alone",
+      1,
+      0
+    ), 
+    black_or_AA = ifelse(
+      RAC1P_label == "Black or African American alone",
+      1,
+      0
+    ),
+    income = HINCP,
+    yearbuilt = case_when(
+      `YBL` == 1 ~ 1925,
+      `YBL` == 2 ~ 1945,
+      `YBL` == 3 ~ 1955,
+      `YBL` == 4 ~ 1965,
+      `YBL` == 5 ~ 1975,
+      `YBL` == 6 ~ 1985,
+      `YBL` == 7 ~ 1995,
+      `YBL` == 8 ~ 2002,
+      `YBL` %in% 9:13 ~ 2007,
+      `YBL` %in% 14:18 ~ 2012,
+      `YBL` %in% 19:23 ~ 2017
+    )
+  ) 
+    
+```
+
+```{r}
+#regression: dependent var = year built, independent vars = whiteness and income, weighted for households
+model <- lm(yearbuilt ~ white + income, bay_pums_regression, weights = WGTP)
+
+summary(model)
+```
+The residuals are centered around 0 and have a roughly symmetrical distribution. 
+Whiteness and income of residents only explain 0.7% of the variation in the year their home was built. The y intercept as well as the slopes/regression coefficients are all essentially 0 with P-values of essentially 0 as well. Therefore, it is essentially impossible to predict the year a house was built in the Bay Area based on household income or whether the household is white or not. 
+
+```{r}
+#regression: dependent var = year built, independent vars = whiteness and income, weighted for households
+model <- lm(yearbuilt ~ black_or_AA + income, bay_pums_regression, weights = WGTP)
+
+summary(model)
+```
+The same conclusions hold true for the prediction of the year a house was built based on the income of the household and whether or not the household is black or African American.
+
+```{r}
+correlationplot <- bay_pums_regression %>% 
+    select(
+    white,
+    income,
+    yearbuilt
+  ) %>% 
+  cor()
+
+corrplot(
+  correlationplot, 
+  method = "number",
+  type = "upper"
+)
+```
+
+Part 2 - CES3 and ACS multiregression analysis at the census tract level
+
+I wanted to run a regression analysis to evaluate the correlation between income and race (census data) and toxic releases from facilities percentiles (CalEnviroScreen 3.0 data). There is a lot of literature that shows correlation between income and race, but race in particular, and exposure to a wide variety of pollutants and emissions in the US. I have included two studies below (Study 3 and Study 4) that have demonstrated positive correlations between minority race population proportions and exposure to pollutants such as PM2.5 and toxicity concentrations and a negative correlation between income and these pollutants. 
+
+My analysis below aligns with these hypothesis, although the % of variation in toxic release percentiles within the Bay Area that can be explained by the percent of the population making over 100k and the percent of the population that is white or black/African American is not as high as the rates from the studies throughout the US. However, % variation in toxic release percentiles explainable by percent black or African American population was over twice is high as that explainable by percent white population within census tracts in the Bay Area. 
+```{r}
+#reading in CalEnviroScreen 3.0 Data
+temp <- tempfile()
+download.file("https://oehha.ca.gov/media/downloads/calenviroscreen/document/ces3results.xlsx",destfile = temp, mode = "wb")
+
+ces3 <- read_excel(temp, sheet = "CES 3.0 (2018 Update)")
+
+unlink(temp)
+```
+
+
+```{r}
+#join CalEnviroScreen toxic release percentiles of each census tract to their geometries
+ca_tracts <- tracts("CA", cb = T, progress_bar = F)
+ces3_bay_tox_rel_pctl <-
+  ces3 %>% 
+  filter(`California County` %in% bay_county_names) %>% 
+  select(`Census Tract`, `Tox. Release Pctl`) %>% 
+  left_join(
+    ca_tracts %>% 
+      transmute(GEOID = as.numeric(GEOID)),
+    by = c("Census Tract" = "GEOID")
+  ) %>% 
+    st_as_sf() %>% 
+  transmute(
+    tract = paste0(`Census Tract`),
+    tox_rel_pctl = `Tox. Release Pctl`/100
+  ) %>% 
+  filter (
+    !is.na(tox_rel_pctl)
+  )
+ces3_bay_tox_rel_pctl$tox_rel_pctl <- as.numeric(ces3_bay_tox_rel_pctl$tox_rel_pctl)
+```
+
+```{r}
+tox_rel_pctl_pal <- colorBin(
+  palette = "Reds",
+  bins = c(0,.2,.4,.6,.8,max(ces3_bay_tox_rel_pctl$tox_rel_pctl, na.rm = T))
+  )
+
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = ces3_bay_tox_rel_pctl,
+    fillColor = ~tox_rel_pctl_pal(tox_rel_pctl),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = ~tox_rel_pctl
+  ) %>% 
+  addLegend(
+    data = ces3_bay_tox_rel_pctl,
+    pal = tox_rel_pctl_pal,
+    values = ~tox_rel_pctl,
+    title = "Toxic Releases from Facilities Percentiles"
+  )
+
+```
+Map of percentiles for toxic releases from facilities (a factor in CalEnviroScreen scores)
+
+
+```{r}
+#calculating percent of population that is white and the percent of the population that makes over $100,000 annually in each census tract in the Bay Area 
+bay_income_race_tract <- 
+  getCensus(
+    name = "acs/acs5",
+    vintage = 2018,
+    region = "tract:*",
+    regionin = "state:06+county:001,013,041,055,075,081,085,095,097",
+    vars = c(
+      "B19001A_001E",
+      "B19001B_001E",
+      "B19001_001E",
+      "B19001_014E",
+      "B19001_015E",
+      "B19001_016E",
+      "B19001_017E"
+    )
+  ) %>% 
+  transmute(
+    tract = paste0(state, county, tract),
+    perc_white = B19001A_001E / B19001_001E,
+    perc_black_or_AA = B19001B_001E / B19001_001E,
+    perc_over100k = (B19001_014E + B19001_015E + B19001_016E + B19001_017E) / B19001_001E
+  ) %>% 
+  mutate(
+    tract = substr(tract,2,11)
+  ) %>%
+  
+  filter(
+    !is.na(perc_white), 
+    !is.na(perc_black_or_AA),
+    !is.na(perc_over100k)
+  )
+
+
+```
+
+```{r}
+#joining income and race data from census data to toxic release percentiles from CalEnviroScreen Data
+bay_income_race_tox_rel <-
+  ces3_bay_tox_rel_pctl %>%
+  left_join(
+    bay_income_race_tract,
+    by = c("tract")
+  ) %>%
+  st_as_sf() %>%
+  st_set_geometry(NULL) %>% 
+  na.omit()
+
+```
+
+```{r}
+#regression: dependent var = toxic release percentile rank, independent vars = percent white and percent over $100,000 income
+model <- lm(tox_rel_pctl ~ perc_white + perc_over100k, bay_income_race_tox_rel)
+
+summary(model)
+```
+
+```{r}
+#regression: dependent var = toxic release percentile rank, independent vars = percent white and percent over $100,000 income
+model <- lm(tox_rel_pctl ~ perc_black_or_AA + perc_over100k, bay_income_race_tox_rel)
+
+summary(model)
+```
+Residuals are centered around 0 and have a roughly symmetrical distribution
+Variation in percent white and percent making over $100,000 annually only explains 4.5% of the variation in the toxic release percentile for census tracts, but evaluating percent black or Afican American instead of percent white increases the explanation in variation to 11% thus suggesting that there is a stronger correlation between toxic release percentiles for census tracts and black or African American populations than non-white populations as a whole.  
+
+```{r}
+#correlation plot of toxic release percentile, percent white, and percent making over $100,000
+correlationplot <- bay_income_race_tox_rel %>% 
+  select(
+    perc_white,
+    perc_over100k,
+    tox_rel_pctl
+  ) %>% 
+  cor()
+
+corrplot(
+  correlationplot, 
+  method = "number",
+  type = "upper"
+)
+```
+Correlation plot of toxic release percentile, percent white, and percent making over $100,000
+
+```{r}
+#correlation plot of toxic release percentile, percent black or African American, and percent making over $100,000
+correlationplot <- bay_income_race_tox_rel %>% 
+  select(
+    perc_black_or_AA,
+    perc_over100k,
+    tox_rel_pctl
+  ) %>% 
+  cor()
+
+corrplot(
+  correlationplot, 
+  method = "number",
+  type = "upper"
+)
+```
+Correlation plot of toxic release percentile, percent black or African American, and percent making over $100,000
+
+\
+\
+\
+
+
+Sources
+
+Study 1 - Fournier et. al. - On energy sufficiency and the need for new policies to combat growing inequities in the residential energy sector --> Disadvantage Communities (DACs) "and  non-DACs  differ greatly with respect to socio-demographic characteristics, most significantly income and the age and condition of their housing stock (Hernández et al., 2016)." --> Within the context of Los Angeles County, discusses how DACs often live in aging and degrading housing stock which contributes to challenges with energy burden due to poor energy efficiency and access to updgrade and weatherization programs. 
+
+Study 2 - Bednar, Reames, Keoleian - The intersection of energy and justice: Modeling the spatial, racial/ethnic and socioeconomic patterns of urban residential heating consumption and efficiency in Detroit, Michigan --> maps show strong spacial correlation between location of aging housing stock and majority African American populations in Detroit --> "Studying cities like Detroit is important because they often have older housing stock central to the city with much newer, suburban developments outside the city. As shown, householders occupying much older housing stock are at a greater risk for increased demand and a greater need for energy assistance programs" --> this relationship between race and aging housing stock is likely a symptom of white flight.
+
+Study 3 - Mikati et. al. - Disparities in Distribution of Particulate Matter
+Emission Sources by Race and Poverty Status --> "Disparities in burden from PM-emitting facilities exist at multiple geographic scales. Disparities for Blacks are more pronounced than are disparities on the basis of poverty status. Strictly socioeconomic considerations may be insufficient to reduce PM burdens equitably across populations."
+
+Study 4 - Downey, Hawkins - Race, Income, and Environmental Inequality in the United States - Literature review and regression models - showed that there is a positive correlations between toxic concentrations and minority populations and negative correlations between toxic conectrations and median income --> "Table 4 shows that after controlling for other neighborhood covariates, all three sets of Race, Income, and Race × Income interaction terms are significantly associated with toxic concentration logged. In Model 1, toxic concentration logged is positively associated with percent non-Hispanic black and negatively associated with median household income and the Race × Income interaction term; in Model 2, toxic concentration logged is negatively associated with percent Hispanic and median household income and positively associated with the Race × Income interaction term; and in Model 3, toxic concentration logged is negatively associated with percent non-Hispanic white and median household income and positively associated with the interaction term."
