@@ -1,0 +1,221 @@
+---
+title: "218X_R9Turn"
+output: flexdashboard::flex_dashboard 
+---
+
+
+```{r global, include = F}
+knitr::opts_chunk$set(warning = F, message = F)
+library(tidyverse)
+library(tigris)
+library(sf)
+library(mapview)
+library(leaflet)
+library(plotly)
+library(censusapi)
+library(mapboxapi)
+library(readxl)
+library(tidycensus)
+
+
+Sys.setenv(CENSUS_KEY="0b9dfaf3fa0df7bb9bce2b33001ae985230cc118")
+
+ca_pumsR6 <- readRDS("ca_pumsR6.rds")
+sf_burden_pumas <- readRDS("sf_burden_pumas.rds")
+my_parcel_zoning <- readRDS("my_parcel_zoning.rds")
+
+burden_palOwner <- colorNumeric(
+  palette = "Purples",
+  domain = sf_burden_pumas %>% 
+    filter(
+      status == "Owner"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+burden_palRenter <- colorNumeric(
+  palette = "Blues",
+  domain = sf_burden_pumas %>% 
+    filter(
+      status == "Renter"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+floorarea_pal <- colorBin(
+  palette = "Greens",
+  bins = c(0,1000,5000,10000,max(my_parcel_zoning$unused_floorarea, na.rm = T))
+)
+
+units_pal <- colorBin(
+  palette = "Oranges",
+  bins = c(0,1,2,3) 
+)
+```
+
+Page 1
+===================================== 
+
+Column
+-------------------------------------
+
+Here is a map of the % of home owner populations that are burdened (spend over 30% of their annual income on mortgage and other related housing expenses) for each PUMA within San Francisco
+
+### Burdened Owner Population
+
+```{r}
+sf_burden_pumas %>% 
+  filter(
+    status =="Owner"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+Column
+-------------------------------------
+
+Here is a map of the % of home renter populations that are burdened (spend over 30% of their annual income on rent and other related housing expenses) for each PUMA within San Francisco
+
+### Burdened Renter Population
+
+```{r}
+sf_burden_pumas %>% 
+  filter(
+    status =="Renter"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+Page 2
+===================================== 
+
+Column
+-------------------------------------
+
+Map of unused floor area by parcel. Two of the highest underutilized parcels are currently undergoing major renovations, so they will potentially be less underutilized in the future. 
+
+### Unused Floor Area
+
+```{r}
+leaflet() %>% 
+  addMapboxTiles(
+    style_id = "light-v9",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    data = my_parcel_zoning,
+    fillColor = ~floorarea_pal(unused_floorarea),
+    fillOpacity = 0.75,
+    color = "white",
+    weight = 0.5,
+    label = ~round(unused_floorarea)
+  ) %>% 
+  addLegend(
+    data = my_parcel_zoning,
+    pal = floorarea_pal,
+    values = ~unused_floorarea,
+    title = "Unused Floor Area"
+  )
+```
+
+Column
+-------------------------------------
+Map of additional units allowed on each parcel. No parcel has potential for more than 3 units, but these numbers are still quite high considering most of these buildings are not allowed to have more than 3 units based on zoning. The area consists of mostly of large homes, many of which have been subdivided into multiple units. This often results in units being larger than necessary since it is often easiest to make one entire floor into it's own unit. The southern section of this parcel contains many homes which have not been subdivided.
+
+### Additional Allowed Units (Units allowed by zoning code - current units)
+
+```{r}
+leaflet() %>% 
+  addMapboxTiles(
+    style_id = "light-v9",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    data = my_parcel_zoning,
+    fillColor = ~units_pal(unused_units),
+    fillOpacity = 0.75,
+    color = "white",
+    weight = 0.5,
+    label = ~round(unused_units)
+  ) %>% 
+  addLegend(
+    data = my_parcel_zoning,
+    pal = units_pal,
+    values = ~unused_units,
+    title = "Additional Units<br>Allowed"
+  )
+```
+
+Column
+-------------------------------------
+
+Map of unused stories by parcel. This assumes each floor would be 11 ft high, which, given that much of the parcels are in the Residential Housing zoning category, would mean that many buildings could have a maximum of three stories since the maximum height is restricted to 35 feet. With other buildings such as those in Residential Mixed zoning, the maximum height is 40ft which would also only allow for 3 stories based on the 11 ft per story assumption, but in reality, they may be able to include another floor. 
+
+# Unused Stories 
+
+```{r}
+my_stories_plot <- 
+  my_parcel_zoning %>% 
+  filter(unused_stories > 0) %>% 
+  ggplot() + 
+  geom_sf(
+    aes(
+      fill = unused_stories
+    ),
+    lwd = 0
+  ) + 
+  theme(
+    axis.text.x = element_blank(), 
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank(),
+    rect = element_blank()
+  ) +
+  labs(
+    fill = "Unused Stories"
+  ) +
+  scale_fill_gradient(
+    low = "white",
+    high = "red"
+  )
+
+my_stories_plot
+```
+
