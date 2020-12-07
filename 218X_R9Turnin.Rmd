@@ -1,6 +1,6 @@
 ---
-title: "218X_R9Turn"
-output: flexdashboard::flex_dashboard 
+title: "218X R9 - San Francisco Burden and Parcel Analysis"
+output: flexdashboard::flex_dashboard
 ---
 
 
@@ -16,6 +16,7 @@ library(censusapi)
 library(mapboxapi)
 library(readxl)
 library(tidycensus)
+library(flexdashboard)
 
 
 Sys.setenv(CENSUS_KEY="0b9dfaf3fa0df7bb9bce2b33001ae985230cc118")
@@ -51,10 +52,74 @@ units_pal <- colorBin(
   palette = "Oranges",
   bins = c(0,1,2,3) 
 )
+
+stories_pal <- colorBin(
+  palette = "Blues",
+  bins = c(0,1,2,3) 
+)
+
+ufa = round(sum(my_parcel_zoning$unused_floorarea),0)
+mfa = round(sum(my_parcel_zoning$max_floorarea),0)
+
+uu = round(sum(my_parcel_zoning$unused_units),0)
+mu = round(sum(my_parcel_zoning$max_units),0)
+
+us = round(sum(my_parcel_zoning$unused_stories),0)
+ms = round(sum(my_parcel_zoning$max_stories),0)
+
 ```
 
-Page 1
+Renter v. Owner Burdened Households
 ===================================== 
+
+Column
+-------------------------------------
+
+### Unused Floor Area
+
+```{r}
+gauge(
+  ufa, 
+  min = 0, 
+  max = mfa, 
+  gaugeSectors(
+      success = c(0, mfa*.33 -1), 
+      warning = c(mfa*.33, mfa*.66 - 1), 
+      danger = c(mfa*.66, mfa)
+  )
+)
+```
+
+### Unused Units
+
+```{r}
+gauge(
+  uu, 
+  min = 0, 
+  max = mu, 
+  gaugeSectors(
+      success = c(0, mu*.33 -1), 
+      warning = c(mu*.33, mu*.66 - 1), 
+      danger = c(mu*.66, mu)
+  )
+)
+```
+
+### Unused Stories
+
+```{r}
+gauge(
+  us, 
+  min = 0, 
+  max = ms, 
+  gaugeSectors(
+      success = c(0, ms*.33 -1), 
+      warning = c(ms*.33, ms*.66 - 1), 
+      danger = c(ms*.66, ms)
+  )
+)
+```
+
 
 Column
 -------------------------------------
@@ -74,7 +139,7 @@ sf_burden_pumas %>%
     username = "mapbox"
   ) %>% 
   addPolygons(
-    fillColor = ~burden_pal1(burdened_30_perc),
+    fillColor = ~burden_palOwner(burdened_30_perc),
     fillOpacity = 0.5,
     color = "white",
     weight = 0.5,
@@ -84,7 +149,7 @@ sf_burden_pumas %>%
     )
   ) %>% 
   addLegend(
-    pal = burden_pal1,
+    pal = burden_palOwner,
     values = ~burdened_30_perc,
     title = "% Cost-burdened<br>households"
   )
@@ -108,7 +173,7 @@ sf_burden_pumas %>%
     username = "mapbox"
   ) %>% 
   addPolygons(
-    fillColor = ~burden_pal1(burdened_30_perc),
+    fillColor = ~burden_palRenter(burdened_30_perc),
     fillOpacity = 0.5,
     color = "white",
     weight = 0.5,
@@ -118,13 +183,13 @@ sf_burden_pumas %>%
     )
   ) %>% 
   addLegend(
-    pal = burden_pal1,
+    pal = burden_palRenter,
     values = ~burdened_30_perc,
     title = "% Cost-burdened<br>households"
   )
 ```
 
-Page 2
+Parcel Metrics for Potential Density
 ===================================== 
 
 Column
@@ -192,30 +257,24 @@ Map of unused stories by parcel. This assumes each floor would be 11 ft high, wh
 # Unused Stories 
 
 ```{r}
-my_stories_plot <- 
-  my_parcel_zoning %>% 
-  filter(unused_stories > 0) %>% 
-  ggplot() + 
-  geom_sf(
-    aes(
-      fill = unused_stories
-    ),
-    lwd = 0
-  ) + 
-  theme(
-    axis.text.x = element_blank(), 
-    axis.text.y = element_blank(),
-    axis.ticks = element_blank(),
-    rect = element_blank()
-  ) +
-  labs(
-    fill = "Unused Stories"
-  ) +
-  scale_fill_gradient(
-    low = "white",
-    high = "red"
+leaflet() %>% 
+  addMapboxTiles(
+    style_id = "light-v9",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    data = my_parcel_zoning,
+    fillColor = ~stories_pal(unused_stories),
+    fillOpacity = 0.75,
+    color = "white",
+    weight = 0.5,
+    label = ~round(unused_stories)
+  ) %>% 
+  addLegend(
+    data = my_parcel_zoning,
+    pal = stories_pal,
+    values = ~unused_stories,
+    title = "Additional Stories<br>Allowed"
   )
-
-my_stories_plot
 ```
 
