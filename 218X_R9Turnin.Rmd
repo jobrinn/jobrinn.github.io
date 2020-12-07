@@ -195,9 +195,8 @@ gauge(
 Column {.tabset}
 -------------------------------------
 
-Map of unused floor area by parcel. Two of the highest underutilized parcels are currently undergoing major renovations, so they will potentially be less underutilized in the future. 
-
 ### Unused Floor Area
+Map of unused floor area by parcel. Two of the highest underutilized parcels are currently undergoing major renovations, so they will potentially be less underutilized in the future.
 
 ```{r}
 leaflet() %>% 
@@ -222,9 +221,9 @@ leaflet() %>%
 ```
 
 
-Map of additional units allowed on each parcel. No parcel has potential for more than 3 units, but these numbers are still quite high considering most of these buildings are not allowed to have more than 3 units based on zoning. The area consists of mostly of large homes, many of which have been subdivided into multiple units. This often results in units being larger than necessary since it is often easiest to make one entire floor into it's own unit. The southern section of this parcel contains many homes which have not been subdivided.
-
 ### Additional Allowed Units
+
+Map of additional units allowed on each parcel. No parcel has potential for more than 3 units, but these numbers are still quite high considering most of these buildings are not allowed to have more than 3 units based on zoning. The area consists of mostly of large homes, many of which have been subdivided into multiple units. This often results in units being larger than necessary since it is often easiest to make one entire floor into it's own unit. The southern section of this parcel contains many homes which have not been subdivided.
 
 ```{r}
 leaflet() %>% 
@@ -248,9 +247,9 @@ leaflet() %>%
   )
 ```
 
-Map of unused stories by parcel. This assumes each story would be 11 ft high. Therefore, even though the Residential Housing zoning category maximum height is 35 feet while the Residential Mixed zoning can be 40 ft high, buildings in both categories would be capped at 3 stories. However, Residential Mixed zoned buildings may realistically be able to include another story. 
+### Unused Stories 
 
-#### Unused Stories 
+Map of unused stories by parcel. This assumes each story would be 11 ft high. Therefore, even though the Residential Housing zoning category maximum height is 35 feet while the Residential Mixed zoning can be 40 ft high, buildings in both categories would be capped at 3 stories. However, Residential Mixed zoned buildings may realistically be able to include another story. 
 
 ```{r}
 leaflet() %>% 
