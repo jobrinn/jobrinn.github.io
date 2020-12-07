@@ -1,6 +1,8 @@
 ---
 title: "218X R9 - San Francisco Burden and Parcel Dashboard"
-output: flexdashboard::flex_dashboard
+output:
+  flexdashboard::flex_dashboard:
+    vertical_layout: fill
 ---
 
 
