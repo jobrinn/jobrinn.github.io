@@ -1,0 +1,954 @@
+---
+title: "Santa Clara burden parcel"
+author: "Jordan Brinn"
+date: "2/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = F, message = F)
+library(tidyverse)
+library(tigris)
+library(sf)
+library(mapview)
+library(leaflet)
+library(plotly)
+library(censusapi)
+library(mapboxapi)
+library(readxl)
+library(tidycensus)
+
+#mb_access_token("sk.eyJ1IjoiamJyaW5uIiwiYSI6ImNraGd0aWx2OTBhc2YydW9sMjE3cGozN3AifQ.2icwqrfIsGzb4A_KEFsxLA", install = T)
+readRenviron("~/.Renviron")
+Sys.setenv(CENSUS_KEY="0b9dfaf3fa0df7bb9bce2b33001ae985230cc118")
+```
+
+#Part 1 - Burden Analysis
+```{r}
+#set up 
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+ca_pumasR6 <-
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_pumasR6 <-
+  ca_pumasR6 %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_pumasR6 %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+pums_vars_2019 <- #changed to 2019
+  pums_variables %>%
+  filter(year == 2019, survey == "acs1")
+```
+
+```{r, eval = F}
+#preaggregated housing cost variables - had to change to 2019 because 2014-2018 was too big
+
+census_api_key("0b9dfaf3fa0df7bb9bce2b33001ae985230cc118")
+ca_pumsR6 <- get_pums(
+  variables = c(
+    "PUMA",
+    "GRNTP", #renter montly costs
+    "SMOCP", #owner monthly costs
+    "ADJHSG",
+    "HINCP",
+    "ADJINC",
+    "NP",
+    "NPF",
+    "NRC"
+  ),
+  state = "CA",
+  year = 2019,
+  survey = "acs1"
+)
+saveRDS(ca_pumsR6,"ca_pumsR6.rds")
+```
+
+```{r, echo = F}
+#to avoid viewing downloading progress in html
+ca_pumsR6 <- readRDS("ca_pumsR6.rds")
+```
+
+```{r}
+#filter pums data for bay area only 
+bay_pumsR6 <-
+  ca_pumsR6 %>% 
+  filter(PUMA %in% bay_pumasR6$PUMACE10)
+```
+
+
+```{r}
+#filtering pums and pumas data for SF county only
+sc_county <-
+  bay_counties %>% 
+  filter(NAME == "Santa Clara")
+
+sc_pumas <-
+  bay_pumasR6 %>% 
+  st_centroid() %>% 
+  .[sc_county, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(bay_pumasR6 %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+sc_pums <-
+  bay_pumsR6 %>%
+  filter(PUMA %in% sc_pumas$PUMACE10)
+```
+
+```{r}
+#SC housing burden (30%) as a percentage and absolute dollar amount
+burden_threshold <- 0.3
+
+sc_burden <-
+  sc_pums %>% 
+  filter(HINCP > 0) %>%
+  filter(SPORDER == 1) %>% 
+  transmute(
+    PUMA = PUMA,
+    weight = WGTP,
+    housingcost = ifelse(
+      SMOCP > 0,
+      SMOCP*12*as.numeric(ADJHSG),
+      GRNTP*12*as.numeric(ADJHSG)
+    ),
+    income = HINCP*as.numeric(ADJINC),
+    burden_perc = housingcost/income,
+    burden_30 = housingcost - burden_threshold*income,
+    incomegap_30 = housingcost/burden_threshold - income,
+    status = ifelse(
+      SMOCP > 0,
+      "Owner",
+      "Renter"
+    ), 
+      AMI_status = case_when(
+      ((income >= 0) & ((NP == 1) & (income <= 33150)) | ((NP == 2) & (income <= 37900)) | ((NP == 3) & (income <= 42650)) | ((NP == 4) & (income <= 47350)) | ((NP == 5) & (income <= 51150)) | ((NP == 6) & (income <= 54950)) | ((NP == 7) & (income <= 58750)) | ((NP >= 8) & (income <= 62550)) ) ~ "ELI",
+      (((NP == 1) & (income <= 55300)) | ((NP == 2) & (income <= 63200)) | ((NP == 3) & (income <= 71100)) | ((NP == 4) & (income <= 78950)) | ((NP == 5) & (income <= 85300)) | ((NP == 6) & (income <= 91600)) | ((NP == 7) & (income <= 97900)) | ((NP >= 8) & (income <= 104250))) ~ "VLI",
+      (((NP == 1) & (income <= 78550)) | ((NP == 2) & (income <= 89750)) | ((NP == 3) & (income <= 100950)) | ((NP == 4) & (income <= 112150)) | ((NP == 5) & (income <= 121150)) | ((NP == 6) & (income <= 130100)) | ((NP == 7) & (income <= 139100)) | ((NP >= 8) & (income <= 148050))) ~ "LI",
+      (((NP == 1) & (income <= 99100)) | ((NP == 2) & (income <= 113300)) | ((NP == 3) & (income <= 127450)) | ((NP == 4) & (income <= 141600)) | ((NP == 5) & (income <= 152950)) | ((NP == 6) & (income <= 164250)) | ((NP == 7) & (income <= 175600)) | ((NP >= 8) & (income <= 186900))) ~ "Med",
+      (((NP == 1) & (income <= 118950)) | ((NP == 2) & (income <= 135900)) | ((NP == 3) & (income <= 152900)) | ((NP == 4) & (income <= 169900)) | ((NP == 5) & (income <= 183500)) | ((NP == 6) & (income <= 197100)) | ((NP == 7) & (income <= 210700)) | ((NP >= 8) & (income <= 224250))) ~"Mod",
+      TRUE ~ "Not LI"
+      ),
+      num_persons = case_when(
+        NP == 1 ~ "1",
+        NP == 2 ~ "2",
+        NP == 3 ~ "3",
+        NP == 4 ~ "4",
+        ((NP >= 5) & (NP <= 7)) ~ "5-7",
+        ((NP >= 8) & (NP <= 10)) ~ "8-10",
+        TRUE ~ "11+"
+      ),
+      num_related_children = case_when(
+        NRC == 0 | NRC == -1 ~ "0",
+        NRC == 1 ~ "1",
+        NRC == 2 ~ "2",
+        NRC == 3 ~ "3",
+        NRC == 4 ~ "4",
+        ((NRC >= 5) & (NRC <= 7)) ~ "5-7",
+        ((NRC >= 8) & (NRC <= 10)) ~ "8-10",
+        TRUE ~ "11+"
+      )
+  )
+
+```
+
+
+```{r}
+#housing burden summary for Bay Area PUMAs based on AMI
+sc_burden_groups <-
+  sc_burden %>% 
+  group_by(AMI_status) %>% 
+  mutate(
+    burdened_30 = ifelse(
+      (burden_perc >= burden_threshold) ,
+        weight,
+        0
+    ),
+    excess_30 = ifelse(
+      (burden_30 < 0) ,
+      burden_30,
+      0
+    ),
+    burden_30 = ifelse(
+      (burden_30 > 0) ,
+      burden_30,
+      0
+    ),
+    incomegap_30 = ifelse(
+      (incomegap_30 > 0),
+      incomegap_30,
+      0
+    )
+  ) 
+
+sc_burden_summary <-
+  sc_burden_groups %>% 
+    summarize(
+    burdened_30 = sum(burdened_30), #number of burdened households (spend 30%+ income on housing)
+    households = sum(weight), #number of households 
+    burden_30 = sum(burden_30*weight), #total funding that would be required to eliminate this housing burden
+    incomegap_30 = sum(incomegap_30*weight), #total increase in income necessary to unburde households that are currently burdened assuming same rent/mortgage payment
+    excess_30 = sum(excess_30*weight) #total amount of money that households would have pay for rent/mortage in order to become burdened (negative amount indicates higher total burden than excess)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households #percent of households burdened in San Francisco County 
+  ) 
+
+sc_burden_summary
+```
+Owner Burden Summary Table
+
+```{r}
+#joining pumas to burdened pums data, grouped by puma and renter/owner status
+sc_burden_pumas <-
+  sc_burden_groups %>% 
+  group_by(PUMA, AMI_status) %>%
+  summarize(
+    burdened_30 = sum(burdened_30),
+    households = sum(weight),
+    burden_30 = sum(burden_30*weight),
+    incomegap_30 = sum(incomegap_30*weight),
+    excess_30 = sum(excess_30*weight)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households
+  ) %>% 
+  left_join(bay_pumasR6 %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+```
+
+```{r}
+#Map of ELI households paying 30%+ of their income
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = sc_burden_pumas %>% 
+    filter(
+      AMI_status == "ELI"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    AMI_status =="ELI"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+```{r}
+#Map of VLI households paying 30%+ of their income
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = sc_burden_pumas %>% 
+    filter(
+      AMI_status == "VLI"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    AMI_status =="VLI"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+```{r}
+#Map of LI households paying 30%+ of their income
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = sc_burden_pumas %>% 
+    filter(
+      AMI_status == "LI"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    AMI_status =="LI"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+```{r}
+#Map of Med households paying 30%+ of their income
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = sc_burden_pumas %>% 
+    filter(
+      AMI_status == "Med" 
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    AMI_status == "Med" 
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+```{r}
+#Map of Mod households paying 30%+ of their income
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = sc_burden_pumas %>% 
+    filter(
+      AMI_status == "Mod"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+   AMI_status == "Mod"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+```{r}
+#housing burden summary for Bay Area PUMAs based on number of people per household
+sc_burden_groups <-
+  sc_burden %>% 
+  group_by(num_persons) %>% 
+  mutate(
+    burdened_30 = ifelse(
+      (burden_perc >= burden_threshold) ,
+        weight,
+        0
+    ),
+    excess_30 = ifelse(
+      (burden_30 < 0) ,
+      burden_30,
+      0
+    ),
+    burden_30 = ifelse(
+      (burden_30 > 0) ,
+      burden_30,
+      0
+    ),
+    incomegap_30 = ifelse(
+      (incomegap_30 > 0),
+      incomegap_30,
+      0
+    )
+  ) 
+
+sc_burden_summary <-
+  sc_burden_groups %>% 
+    summarize(
+    burdened_30 = sum(burdened_30), #number of burdened households (spend 30%+ income on housing)
+    households = sum(weight), #number of households 
+    burden_30 = sum(burden_30*weight), #total funding that would be required to eliminate this housing burden
+    incomegap_30 = sum(incomegap_30*weight), #total increase in income necessary to unburde households that are currently burdened assuming same rent/mortgage payment
+    excess_30 = sum(excess_30*weight) #total amount of money that households would have pay for rent/mortage in order to become burdened (negative amount indicates higher total burden than excess)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households #percent of households burdened in San Francisco County 
+  ) 
+
+sc_burden_summary
+```
+
+```{r}
+#joining pumas to burdened pums data, grouped by puma and number of persons 
+sc_burden_pumas <-
+  sc_burden_groups %>% 
+  group_by(PUMA, num_persons) %>%
+  summarize(
+    burdened_30 = sum(burdened_30),
+    households = sum(weight),
+    burden_30 = sum(burden_30*weight),
+    incomegap_30 = sum(incomegap_30*weight),
+    excess_30 = sum(excess_30*weight)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households
+  ) %>% 
+  left_join(bay_pumasR6 %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+```
+
+```{r}
+#Map of % of 1 person households paying 30%+ of income 
+burden_pal1 <- colorNumeric(
+  palette = "Blues",
+  domain = sc_burden_pumas %>% 
+    filter(
+      num_persons == "1"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    num_persons =="1"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+```{r}
+#Map of % of 2 person households paying 30%+ of income 
+burden_pal1 <- colorNumeric(
+  palette = "Blues",
+  domain = sc_burden_pumas %>% 
+    filter(
+      num_persons == "2" 
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    num_persons == "2" 
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+
+```{r}
+#Map of % of 3 person households paying 30%+ of income 
+burden_pal1 <- colorNumeric(
+  palette = "Blues",
+  domain = sc_burden_pumas %>% 
+    filter(
+     num_persons == "3"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    num_persons == "3"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+```{r}
+#Map of % of 4 person households paying 30%+ of income 
+burden_pal1 <- colorNumeric(
+  palette = "Blues",
+  domain = sc_burden_pumas %>% 
+    filter(
+     num_persons == "4" 
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    num_persons == "4" 
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+```{r}
+#Map of % of 5-7 person households paying 30%+ of income 
+burden_pal1 <- colorNumeric(
+  palette = "Blues",
+  domain = sc_burden_pumas %>% 
+    filter(
+      num_persons == "5-7" 
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    num_persons == "5-7" 
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+```{r}
+#housing burden summary for Bay Area PUMAs based on number of related children per household 
+sc_burden_groups <-
+  sc_burden %>% 
+  group_by(num_related_children) %>% 
+  mutate(
+    burdened_30 = ifelse(
+      (burden_perc >= burden_threshold) ,
+        weight,
+        0
+    ),
+    excess_30 = ifelse(
+      (burden_30 < 0) ,
+      burden_30,
+      0
+    ),
+    burden_30 = ifelse(
+      (burden_30 > 0) ,
+      burden_30,
+      0
+    ),
+    incomegap_30 = ifelse(
+      (incomegap_30 > 0),
+      incomegap_30,
+      0
+    )
+  ) 
+
+sc_burden_summary <-
+  sc_burden_groups %>% 
+    summarize(
+    burdened_30 = sum(burdened_30), #number of burdened households (spend 30%+ income on housing)
+    households = sum(weight), #number of households 
+    burden_30 = sum(burden_30*weight), #total funding that would be required to eliminate this housing burden
+    incomegap_30 = sum(incomegap_30*weight), #total increase in income necessary to unburde households that are currently burdened assuming same rent/mortgage payment
+    excess_30 = sum(excess_30*weight) #total amount of money that households would have pay for rent/mortage in order to become burdened (negative amount indicates higher total burden than excess)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households #percent of households burdened in San Francisco County 
+  ) 
+
+sc_burden_summary
+```
+
+```{r}
+#joining pumas to burdened pums data, grouped by puma and number of persons 
+sc_burden_pumas <-
+  sc_burden_groups %>% 
+  group_by(PUMA, num_related_children) %>%
+  summarize(
+    burdened_30 = sum(burdened_30),
+    households = sum(weight),
+    burden_30 = sum(burden_30*weight),
+    incomegap_30 = sum(incomegap_30*weight),
+    excess_30 = sum(excess_30*weight)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households
+  ) %>% 
+  left_join(bay_pumasR6 %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+```
+
+```{r}
+#Map of % of 0 related children households paying 30%+ of income 
+burden_pal1 <- colorNumeric(
+  palette = "Oranges",
+  domain = sc_burden_pumas %>% 
+    filter(
+      num_related_children == "0"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    num_related_children =="0"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+```{r}
+#Map of % of 1 related children households paying 30%+ of income 
+burden_pal1 <- colorNumeric(
+  palette = "Oranges",
+  domain = sc_burden_pumas %>% 
+    filter(
+      num_related_children == "1"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    num_related_children =="1"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+```{r}
+#Map of % of 2 related children households paying 30%+ of income 
+burden_pal1 <- colorNumeric(
+  palette = "Oranges",
+  domain = sc_burden_pumas %>% 
+    filter(
+      num_related_children == "2"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    num_related_children =="2"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+```{r}
+#Map of % of 3 related children households paying 30%+ of income 
+burden_pal1 <- colorNumeric(
+  palette = "Oranges",
+  domain = sc_burden_pumas %>% 
+    filter(
+      num_related_children == "3" 
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    num_related_children == "3" 
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+```{r}
+#Map of % of 4 related children households paying 30%+ of income 
+burden_pal1 <- colorNumeric(
+  palette = "Oranges",
+  domain = sc_burden_pumas %>% 
+    filter(
+      num_related_children == "4"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    num_related_children == "4"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
+
+
+
+```{r}
+#Map of % of 5-7 related children households paying 30%+ of income 
+burden_pal1 <- colorNumeric(
+  palette = "Oranges",
+  domain = sc_burden_pumas %>% 
+    filter(
+      num_related_children == "5-7"
+    ) %>% 
+    pull(burdened_30_perc)
+)
+
+sc_burden_pumas %>% 
+  filter(
+    num_related_children =="5-7"
+  ) %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>households"
+  )
+```
